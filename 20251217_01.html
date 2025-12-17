@@ -1,0 +1,1487 @@
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Mic, Pause, Square, Loader2, Download, RotateCcw, X, CheckCircle, ListPlus, Volume2, Eye, FileText, AlertTriangle, Users, Edit3, Save, Play, StopCircle, Sparkles, ListTodo, Mail, Copy, ChevronDown, ChevronUp, Home, Settings, Key, Zap, FileAudio, Captions, Wand2, ArrowRightLeft, Languages, MessageSquare, Send } from 'lucide-react';
+
+// --- 1. TYPES & CONSTANTS ---
+
+// API Key 將由執行環境自動注入，或是您可以手動填入
+const apiKey = ""; 
+const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
+
+// --- 2. UTILITY FUNCTIONS ---
+
+/** 取得格式化的時間戳記字串 YYYYMMDD_HHMMSS */
+const getFormattedTimestamp = () => {
+  const now = new Date();
+  const pad = (num) => num.toString().padStart(2, '0');
+  const year = now.getFullYear();
+  const month = pad(now.getMonth() + 1);
+  const day = pad(now.getDate());
+  const hours = pad(now.getHours());
+  const minutes = pad(now.getMinutes());
+  const seconds = pad(now.getSeconds());
+  return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+};
+
+/** 取得瀏覽器支援的 MIME Type (解決 iOS/Safari 相容性問題) */
+const getSupportedMimeType = () => {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if (isIOS) {
+    if (MediaRecorder.isTypeSupported('audio/mp4')) return 'audio/mp4';
+    if (MediaRecorder.isTypeSupported('audio/aac')) return 'audio/aac';
+  }
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+  for (const type of types) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return '';
+};
+
+/** 格式化時間秒數為 MM:SS */
+const formatTime = (totalSeconds) => {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+};
+
+/** 將 Blob 轉換為 Base64 (供 API 使用) */
+const blobToBase64 = (blob) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result.split(',')[1];
+      resolve(base64String);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
+
+/** 下載檔案 */
+const downloadFile = (filename, content, mimeType) => {
+  const isBlob = content instanceof Blob;
+  const blob = isBlob ? content : new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+/** 解析並生成 SRT 字幕格式 */
+const generateSRT = (transcriptText, totalDurationSeconds) => {
+  const regex = /(\[\d{2}:\d{2}\])\s*(.*?)(?=\[\d{2}:\d{2}\]|$)/gs;
+  let matches = [...transcriptText.matchAll(regex)];
+  let srt = '';
+
+  const timeToMilliseconds = (timeStr) => {
+    const parts = timeStr.match(/\[(\d{2}):(\d{2})\]/);
+    if (!parts) return 0;
+    const minutes = parseInt(parts[1], 10);
+    const seconds = parseInt(parts[2], 10);
+    return (minutes * 60 + seconds) * 1000;
+  };
+
+  const msToSRTTime = (ms) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const msRemainder = ms % 1000;
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')},${msRemainder.toString().padStart(3, '0')}`;
+  };
+
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i];
+    const startTimeStr = match[1];
+    const segmentText = match[2].trim();
+    const startTimeMs = timeToMilliseconds(startTimeStr);
+
+    let endTimeMs;
+    if (i < matches.length - 1) {
+      endTimeMs = timeToMilliseconds(matches[i + 1][1]);
+    } else {
+      endTimeMs = totalDurationSeconds * 1000;
+    }
+
+    if (endTimeMs <= startTimeMs) {
+        endTimeMs = startTimeMs + 1000; 
+    }
+    
+    srt += (i + 1) + '\n';
+    srt += `${msToSRTTime(startTimeMs)} --> ${msToSRTTime(endTimeMs)}\n`;
+    srt += segmentText + '\n\n';
+  }
+
+  return srt.trim();
+};
+
+/** 全局替換發言者名稱 */
+const replaceSpeakerNames = (text, mapping) => {
+  let newText = text;
+  Object.keys(mapping).forEach(placeholder => {
+    const realName = mapping[placeholder];
+    if (realName && realName.trim() !== '') {
+      const escapedPlaceholder = placeholder.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const regex = new RegExp(`\\[${escapedPlaceholder}\\]`, 'g');
+      newText = newText.replace(regex, `[${realName}]`);
+    }
+  });
+  return newText;
+};
+
+/** 解析時間字串 [MM:SS] 為秒數 (用於試聽跳轉) */
+const timeStringToSeconds = (timeStr) => {
+  if (!timeStr) return 0;
+  const parts = timeStr.match(/(\d{2}):(\d{2})/);
+  if (!parts) return 0;
+  return parseInt(parts[1], 10) * 60 + parseInt(parts[2], 10);
+};
+
+/** 提取所有發言者及其「第一次發言時間」 */
+const extractSpeakersWithTime = (text) => {
+  const regex = /\[(\d{2}:\d{2})\]\s*\[(發言者\s?[A-Z0-9]+|Speaker\s?[A-Z0-9]+|未知\s?[A-Z0-9]+)\]/g;
+  const matches = [...text.matchAll(regex)];
+  
+  const speakerMap = new Map();
+  
+  matches.forEach(m => {
+    const timeStr = m[1];
+    const speakerName = m[2];
+    
+    // 只記錄該發言者「第一次」出現的時間
+    if (!speakerMap.has(speakerName)) {
+      speakerMap.set(speakerName, timeStringToSeconds(timeStr));
+    }
+  });
+
+  return Array.from(speakerMap.entries())
+    .map(([name, time]) => ({ name, startTime: time }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+};
+
+// --- 3. COMPONENTS ---
+
+const BackgroundGlows = () => (
+  <>
+    <div className="absolute top-0 left-0 w-80 h-80 bg-pink-300 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob"></div>
+    <div className="absolute bottom-0 right-0 w-80 h-80 bg-purple-300 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-2000"></div>
+  </>
+);
+
+const AudioVisualizer = React.memo(({ analyser, isRecording, color = '#ec4899' }) => {
+  const canvasRef = useRef(null);
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !analyser) return;
+
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    ctx.clearRect(0, 0, width, height);
+
+    if (isRecording) {
+      analyser.fftSize = 2048;
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      analyser.getByteFrequencyData(dataArray);
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = color; 
+      ctx.beginPath();
+
+      const sliceWidth = width * 1.0 / bufferLength;
+      let x = 0;
+
+      for(let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 256.0;
+        const y = height - (v * height); 
+        
+        if(i === 0) {
+          ctx.moveTo(x, height / 2); 
+        } else {
+          const displacement = (v * height) / 2;
+          ctx.lineTo(x, height/2 - displacement); 
+        }
+
+        x += sliceWidth;
+      }
+      
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+    }
+    
+    requestAnimationFrame(draw);
+  }, [analyser, isRecording, color]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const container = canvas.parentElement;
+      canvas.width = container.clientWidth;
+      canvas.height = container.clientHeight;
+    }
+    
+    let animationFrameId;
+    if (analyser) {
+      draw();
+    }
+    
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [analyser, draw]);
+
+  return (
+    <div className="w-full h-full flex items-center justify-center">
+      <canvas ref={canvasRef} className="w-full h-full" />
+    </div>
+  );
+});
+
+// --- Modals ---
+
+const ApiKeyModal = ({ onClose, currentKey, onSave }) => {
+  const [key, setKey] = useState(currentKey || '');
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border-4 border-pink-100">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-xl font-bold text-pink-700 flex items-center">
+            <Settings className="w-6 h-6 mr-2" />
+            設定 API Key
+          </h3>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full">
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+        
+        <div className="bg-pink-50 p-4 rounded-xl mb-6 text-sm text-pink-800 leading-relaxed">
+          <p className="font-bold mb-2 flex items-center"><AlertTriangle className="w-4 h-4 mr-1"/> 為何出現 401 錯誤？</p>
+          <p>這表示系統預設的金鑰已過期或無效。為了穩定使用，建議您輸入自己的 Google Gemini API Key。</p>
+        </div>
+
+        <div className="mb-6">
+          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="apikey">
+            輸入 API Key
+          </label>
+          <div className="flex items-center border-2 border-gray-200 rounded-xl px-3 py-2 focus-within:border-pink-500 bg-white">
+            <Key className="w-5 h-5 text-gray-400 mr-2" />
+            <input
+              id="apikey"
+              type="password"
+              className="flex-1 outline-none text-gray-700"
+              placeholder="貼上您的 API Key..."
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <button 
+          onClick={() => { onSave(key); onClose(); }}
+          className="w-full py-3 bg-pink-500 text-white rounded-xl font-bold shadow-lg hover:bg-pink-600 transition-all active:scale-95"
+        >
+          儲存並使用
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const AIChatModal = ({ onClose, onAskAI, isLoading, answer }) => {
+    const [query, setQuery] = useState("");
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        if (query.trim()) {
+            onAskAI(query);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 border-4 border-pink-100 flex flex-col max-h-[85vh]">
+                <div className="flex justify-between items-center mb-4 flex-shrink-0">
+                    <h3 className="text-xl font-bold text-pink-700 flex items-center">
+                        <MessageSquare className="w-5 h-5 mr-2" />
+                        AI 會議問答助手
+                    </h3>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full">
+                        <X className="w-5 h-5 text-gray-500" />
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto mb-4 bg-gray-50 p-4 rounded-xl border border-gray-200 custom-scrollbar flex flex-col space-y-4">
+                     {/* Empty State */}
+                     {!answer && !isLoading && (
+                         <div className="text-center text-gray-400 mt-10">
+                             <p>請輸入關於這場會議的問題，<br/>例如：「會議結論是什麼？」</p>
+                         </div>
+                     )}
+                     
+                     {/* User Query Display (Optional, simplifed for now) */}
+                     
+                     {/* Answer */}
+                     {answer && (
+                         <div className="bg-white p-3 rounded-xl rounded-tl-none shadow-sm border border-pink-100">
+                             <div className="flex items-center space-x-2 mb-2 text-pink-600 font-bold text-xs">
+                                 <Sparkles className="w-3 h-3" />
+                                 <span>AI 回答</span>
+                             </div>
+                             <div className="text-gray-700 text-sm whitespace-pre-wrap leading-relaxed">
+                                 {answer}
+                             </div>
+                         </div>
+                     )}
+
+                     {isLoading && (
+                         <div className="flex items-center space-x-2 text-gray-500 text-sm p-2">
+                             <Loader2 className="w-4 h-4 animate-spin" />
+                             <span>AI 正在思考中...</span>
+                         </div>
+                     )}
+                </div>
+
+                <form onSubmit={handleSubmit} className="flex items-center space-x-2 flex-shrink-0">
+                    <input
+                        type="text"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="輸入您的問題..."
+                        className="flex-1 border-2 border-gray-200 rounded-xl px-4 py-2 focus:border-pink-500 outline-none text-sm transition-colors"
+                    />
+                    <button 
+                        type="submit" 
+                        disabled={!query.trim() || isLoading}
+                        className="p-2.5 bg-pink-500 text-white rounded-xl hover:bg-pink-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                    >
+                        <Send className="w-5 h-5" />
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+const AIAnalysisModal = ({ title, content, isLoading, onClose }) => {
+  const [copyStatus, setCopyStatus] = useState('複製');
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(content);
+    setCopyStatus('已複製!');
+    setTimeout(() => setCopyStatus('複製'), 2000);
+  };
+
+  const handleDownload = () => {
+    const timestamp = getFormattedTimestamp();
+    const filename = `${timestamp}_${title.replace(/\s+/g, '')}.txt`;
+    downloadFile(filename, content, 'text/plain');
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl p-6 border-4 border-pink-100 flex flex-col max-h-[85vh]">
+        <div className="flex justify-between items-center mb-4 flex-shrink-0">
+          <h3 className="text-xl font-bold text-pink-700 flex items-center">
+            <Sparkles className="w-5 h-5 mr-2" />
+            {title}
+          </h3>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full">
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto mb-6 bg-pink-50/50 p-4 rounded-xl border border-pink-100 custom-scrollbar">
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center h-48 space-y-3">
+              <Loader2 className="w-8 h-8 text-pink-500 animate-spin" />
+              <p className="text-gray-500 animate-pulse">AI 正在思考中...</p>
+            </div>
+          ) : (
+            <div className="whitespace-pre-wrap text-gray-700 text-sm leading-relaxed">
+              {content}
+            </div>
+          )}
+        </div>
+
+        {!isLoading && (
+          <div className="flex justify-end space-x-3 flex-shrink-0">
+            <button 
+              onClick={handleCopy}
+              className="px-4 py-2 text-pink-600 bg-pink-50 rounded-lg hover:bg-pink-100 transition-colors flex items-center text-sm font-medium"
+            >
+              <Copy className="w-4 h-4 mr-2" />
+              {copyStatus}
+            </button>
+            <button 
+              onClick={handleDownload}
+              className="px-4 py-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors flex items-center text-sm font-medium border border-blue-100"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              下載檔案
+            </button>
+            <button 
+              onClick={onClose}
+              className="px-6 py-2 bg-pink-500 text-white rounded-lg hover:bg-pink-600 shadow-md transition-all active:scale-95 text-sm font-bold"
+            >
+              關閉
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- Polishing/Comparison Modal (含播放器) ---
+
+const ComparisonModal = ({ title, icon: Icon, originalText, processedText, isLoading, onClose, audioUrl, isTranslation = false }) => {
+  const [copyStatus, setCopyStatus] = useState('複製');
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(processedText);
+    setCopyStatus('已複製!');
+    setTimeout(() => setCopyStatus('複製'), 2000);
+  };
+
+  const handleDownload = () => {
+    const timestamp = getFormattedTimestamp();
+    const filename = `${timestamp}_${title}.txt`;
+    downloadFile(filename, processedText, 'text/plain');
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full h-full max-w-6xl p-6 border-4 border-pink-100 flex flex-col">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-4 flex-shrink-0">
+          <h3 className="text-2xl font-bold text-pink-700 flex items-center">
+            <Icon className="w-6 h-6 mr-3" />
+            {title}
+          </h3>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+            <X className="w-6 h-6 text-gray-500" />
+          </button>
+        </div>
+
+        {/* Audio Player in Modal (Requested Feature) */}
+        <div className="bg-pink-50 rounded-xl p-3 mb-4 flex items-center space-x-3 border border-pink-100 flex-shrink-0">
+            <div className="bg-white p-2 rounded-full shadow-sm">
+                <Play className="w-5 h-5 text-pink-500 ml-0.5" />
+            </div>
+            <audio controls playsInline webkit-playsinline="true" src={audioUrl} className="w-full h-10 opacity-90" />
+        </div>
+
+        {/* Content Area - Split View */}
+        <div className="flex-1 flex flex-col md:flex-row gap-6 overflow-hidden mb-6">
+            {/* Left: Original */}
+            <div className="flex-1 flex flex-col min-h-0 bg-gray-50 rounded-2xl border border-gray-200">
+                <div className="p-3 border-b border-gray-200 bg-gray-100 rounded-t-2xl font-bold text-gray-600 flex items-center">
+                    <FileText className="w-4 h-4 mr-2" /> 原始逐字稿
+                </div>
+                <div className="flex-1 p-4 overflow-y-auto whitespace-pre-wrap text-gray-700 text-sm leading-relaxed custom-scrollbar">
+                    {originalText}
+                </div>
+            </div>
+
+            {/* Middle Icon (Desktop only) */}
+            <div className="hidden md:flex flex-col justify-center text-pink-400">
+                <ArrowRightLeft className="w-8 h-8" />
+            </div>
+
+            {/* Right: Processed */}
+            <div className="flex-1 flex flex-col min-h-0 bg-white rounded-2xl border border-pink-200 shadow-inner">
+                <div className="p-3 border-b border-pink-200 bg-pink-50 rounded-t-2xl font-bold text-pink-700 flex items-center">
+                    <Sparkles className="w-4 h-4 mr-2" /> AI 處理結果
+                </div>
+                <div className="flex-1 p-4 overflow-y-auto custom-scrollbar relative">
+                    {isLoading ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm z-10">
+                            <Loader2 className="w-10 h-10 text-pink-500 animate-spin mb-3" />
+                            <p className="text-pink-600 font-medium animate-pulse">AI 正在生成中...</p>
+                        </div>
+                    ) : (
+                        <div className={`whitespace-pre-wrap text-base leading-relaxed ${isTranslation ? 'text-red-600 font-medium' : 'text-gray-800'}`}>
+                            {processedText}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+
+        {/* Footer Actions */}
+        <div className="flex justify-end space-x-3 flex-shrink-0">
+            {!isLoading && (
+                <>
+                    <button 
+                        onClick={handleCopy}
+                        className="px-5 py-2.5 text-pink-600 bg-pink-50 rounded-xl hover:bg-pink-100 transition-colors flex items-center font-medium"
+                    >
+                        <Copy className="w-4 h-4 mr-2" />
+                        {copyStatus}
+                    </button>
+                    <button 
+                        onClick={handleDownload}
+                        className="px-5 py-2.5 text-blue-600 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors flex items-center font-medium border border-blue-100"
+                    >
+                        <Download className="w-4 h-4 mr-2" />
+                        下載結果
+                    </button>
+                </>
+            )}
+            <button 
+                onClick={onClose}
+                className="px-8 py-2.5 bg-pink-600 text-white rounded-xl hover:bg-pink-700 shadow-lg transition-all active:scale-95 font-bold"
+            >
+                關閉
+            </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const SpeakerRenamer = ({ transcript, audioUrl, onClose, onApply }) => {
+  const [speakers, setSpeakers] = useState([]);
+  const [mapping, setMapping] = useState({});
+  const [playingSpeaker, setPlayingSpeaker] = useState(null);
+  const audioRef = useRef(null);
+  const playTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    const detected = extractSpeakersWithTime(transcript);
+    setSpeakers(detected);
+    const initialMapping = {};
+    detected.forEach(s => initialMapping[s.name] = '');
+    setMapping(initialMapping);
+  }, [transcript]);
+
+  const playSample = async (speakerName, startTime) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (playingSpeaker) {
+      audio.pause();
+      clearTimeout(playTimeoutRef.current);
+    }
+
+    setPlayingSpeaker(speakerName);
+    
+    try {
+        if (audio.readyState === 0) {
+            audio.load();
+        }
+        audio.currentTime = startTime;
+        await audio.play();
+        playTimeoutRef.current = setTimeout(() => {
+            audio.pause();
+            setPlayingSpeaker(null);
+        }, 5000); 
+    } catch (e) {
+        console.error("試聽播放失敗:", e);
+        setPlayingSpeaker(null);
+    }
+  };
+
+  const stopSample = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    clearTimeout(playTimeoutRef.current);
+    setPlayingSpeaker(null);
+  };
+
+  const handleChange = (placeholder, newName) => {
+    setMapping(prev => ({ ...prev, [placeholder]: newName }));
+  };
+
+  const handleApply = () => {
+    stopSample(); 
+    onApply(mapping);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
+      <audio ref={audioRef} src={audioUrl} style={{ display: 'none' }} playsInline webkit-playsinline="true" />
+
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border-4 border-pink-100 flex flex-col max-h-[85vh]">
+        <div className="flex justify-between items-center mb-4 flex-shrink-0">
+          <h3 className="text-xl font-bold text-pink-700 flex items-center">
+            <Edit3 className="w-5 h-5 mr-2" />
+            辨識與命名
+          </h3>
+          <button onClick={() => { stopSample(); onClose(); }} className="p-2 hover:bg-gray-100 rounded-full">
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+        
+        <div className="mb-4 bg-pink-50 p-3 rounded-lg text-sm text-pink-800 leading-relaxed flex-shrink-0">
+          系統自動分出了以下發言者。<br/>
+          點擊 <Play className="w-3 h-3 inline mx-1" /> 可試聽該發言者 5 秒鐘的聲音，方便您辨認並輸入真實姓名。
+        </div>
+
+        <div className="flex-1 overflow-y-auto mb-6 space-y-4 custom-scrollbar pr-2">
+          {speakers.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              <p>未偵測到 [發言者 X] 格式的標籤。</p>
+              <p className="text-xs mt-2">請確認錄音轉錄是否成功。</p>
+            </div>
+          ) : (
+            speakers.map(({ name, startTime }) => (
+              <div key={name} className="flex items-center space-x-3 bg-white p-2 rounded-lg border border-gray-100 shadow-sm">
+                
+                <button 
+                  onClick={() => playingSpeaker === name ? stopSample() : playSample(name, startTime)}
+                  className={`p-2 rounded-full flex-shrink-0 transition-all ${playingSpeaker === name ? 'bg-red-500 text-white animate-pulse' : 'bg-pink-100 text-pink-600 hover:bg-pink-200'}`}
+                  title={`試聽 ${name} (從 ${formatTime(startTime)} 開始)`}
+                >
+                  {playingSpeaker === name ? <Square className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                </button>
+
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-gray-500">{name}</span>
+                    <span className="text-[10px] text-gray-300 font-mono">@{formatTime(startTime)}</span>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="輸入真實姓名..."
+                    className="w-full border-b-2 border-gray-200 focus:border-pink-500 outline-none py-1 text-gray-800 text-sm bg-transparent transition-colors"
+                    value={mapping[name]}
+                    onChange={(e) => handleChange(name, e.target.value)}
+                  />
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <button 
+          onClick={handleApply}
+          className="w-full py-3 bg-pink-500 text-white rounded-xl font-bold shadow-lg hover:bg-pink-600 transition-all active:scale-95 flex-shrink-0"
+        >
+          全部取代並儲存
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
+const App = () => {
+  // --- STATE MANAGEMENT ---
+  const [appState, setAppState] = useState('idle');
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [lastDuration, setLastDuration] = useState(0); 
+  const [error, setError] = useState(null);
+  const [audioBlob, setAudioBlob] = useState(null);
+  const [transcriptionResult, setTranscriptionResult] = useState(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showRenamerModal, setShowRenamerModal] = useState(false);
+  
+  // API Key Management
+  const [userApiKey, setUserApiKey] = useState('');
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+
+  // AI Analysis & Chat State
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
+  const [analysisTitle, setAnalysisTitle] = useState('');
+  const [analysisContent, setAnalysisContent] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [chatAnswer, setChatAnswer] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+
+  // Polishing & Translation State
+  const [showComparisonModal, setShowComparisonModal] = useState(false);
+  const [comparisonTitle, setComparisonTitle] = useState('');
+  const [comparisonIcon, setComparisonIcon] = useState(null);
+  const [processedText, setProcessedText] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isTranslationMode, setIsTranslationMode] = useState(false);
+
+  // --- REFS ---
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const audioContextRef = useRef(null);
+  const streamRef = useRef(null); 
+  const analyserRef = useRef(null);
+  const sourceNodeRef = useRef(null);
+  const timerIntervalRef = useRef(null);
+  const recordingTimeRef = useRef(0);
+  const wakeLockRef = useRef(null);
+
+  const stableAudioUrl = useMemo(() => {
+    return audioBlob ? URL.createObjectURL(audioBlob) : null;
+  }, [audioBlob]);
+
+  useEffect(() => {
+    const savedKey = localStorage.getItem('gemini_api_key');
+    if (savedKey) setUserApiKey(savedKey);
+  }, []);
+
+  // --- WAKE LOCK LOGIC ---
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+      } catch (err) {
+        console.error(`${err.name}, ${err.message}`);
+      }
+    }
+  };
+
+  const releaseWakeLock = async () => {
+    if (wakeLockRef.current) {
+      try {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      } catch (err) {
+        console.error(`${err.name}, ${err.message}`);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && appState === 'recording') {
+        await requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        releaseWakeLock();
+    };
+  }, [appState]);
+
+
+  const handleSaveApiKey = (key) => {
+    setUserApiKey(key);
+    localStorage.setItem('gemini_api_key', key);
+  };
+
+  // --- GEMINI SERVICE ---
+  const callGeminiApi = async (mainBlob, durationSeconds) => {
+    setAppState('transcribing');
+    setError(null);
+
+    const activeKey = userApiKey || ""; 
+
+    try {
+      const base64Audio = await blobToBase64(mainBlob);
+
+      const systemInstruction = `
+        你是一位專業的會議記錄員。請將提供的會議錄音準確轉錄為**繁體中文**。
+        
+        **關鍵任務：發言者分群 (Speaker Diarization)**
+        1. 必須**根據聲音特徵區分不同的人**，不論人數多寡。
+        2. 請使用 \`[發言者 A]\`、\`[發言者 B]\` ... 或 \`[發言者 1]\`、\`[發言者 2]\` 等代號來標記。
+        3. 請保持一致性：相同的聲音必須始終標記為相同的代號。
+        4. 每個段落開始時，務必加上時間戳記與發言者標籤。
+        
+        **輸出格式要求：**
+        請嚴格遵守以下格式，不要有額外的開場白或結語：
+        \`[MM:SS] [發言者 A]: 發言內容\`
+      `.trim();
+      
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${activeKey}`;
+      
+      const payload = {
+        contents: [{
+            parts: [
+                {
+                    inlineData: {
+                        mimeType: mainBlob.type,
+                        data: base64Audio
+                    }
+                },
+                { text: "請轉錄並依聲音區分發言者。" }
+            ]
+        }],
+        systemInstruction: {
+          parts: [{ text: systemInstruction }]
+        },
+      };
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+            throw new Error("API Key 無效或未設定 (401)");
+        }
+        throw new Error(`API Request failed with status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!generatedText) {
+        throw new Error('API Response was empty or invalid.');
+      }
+
+      const srtContent = generateSRT(generatedText, durationSeconds);
+      
+      setTranscriptionResult({ 
+        transcript: generatedText, 
+        srtContent: srtContent 
+      });
+      setAppState('review');
+
+    } catch (err) {
+      console.error('Transcription error:', err);
+      let errorMsg = err.message;
+      if (err.message.includes("401")) {
+          errorMsg = "API 金鑰無效。請點擊左上角齒輪設定正確的 API Key。";
+          setShowApiKeyModal(true); 
+      }
+      setError('AI 轉錄失敗: ' + errorMsg);
+      setAppState('error');
+    }
+  };
+
+  const callGeminiAnalysis = async (type) => {
+    if (!transcriptionResult) return;
+    
+    setAnalysisTitle(type === 'summary' ? '會議重點摘要' : type === 'todo' ? '待辦事項清單' : '跟進 Email 草稿');
+    setAnalysisContent('');
+    setShowAnalysisModal(true);
+    setIsAnalyzing(true);
+
+    const activeKey = userApiKey || "";
+
+    try {
+      let prompt = "";
+      if (type === 'summary') {
+        prompt = `請針對以下會議逐字稿，生成一份精簡的「重點摘要」。包含：\n1. 會議主題\n2. 關鍵討論事項\n3. 做出的決策\n\n逐字稿內容：\n${transcriptionResult.transcript}`;
+      } else if (type === 'todo') {
+        prompt = `請從以下會議逐字稿中，提取所有「待辦事項 (Action Items)」。\n請列出：負責人、具體任務、(若有)截止日期。\n\n逐字稿內容：\n${transcriptionResult.transcript}`;
+      } else if (type === 'email') {
+        prompt = `請根據以下會議記錄，草擬一封給所有與會者的「會議跟進 Email」。\n語氣請保持專業、友善。內容需包含感謝語、會議重點回顧及待辦事項提醒。\n\n逐字稿內容：\n${transcriptionResult.transcript}`;
+      }
+
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${activeKey}`;
+      const payload = {
+        contents: [{ parts: [{ text: prompt }] }]
+      };
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+          if (response.status === 401) throw new Error("API Key 無效 (401)");
+          throw new Error('Analysis failed');
+      }
+      const result = await response.json();
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      setAnalysisContent(text);
+
+    } catch (e) {
+      console.error(e);
+      if (e.message.includes("401")) {
+          setAnalysisContent("分析失敗：API Key 無效，請檢查設定。");
+          setShowApiKeyModal(true);
+      } else {
+          setAnalysisContent("分析失敗，請稍後再試。");
+      }
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const callGeminiChat = async (question) => {
+    if (!transcriptionResult) return;
+    setIsChatLoading(true);
+    setChatAnswer('');
+    
+    const activeKey = userApiKey || "";
+
+    try {
+        const prompt = `
+            你是一個專業的 AI 會議助手。
+            請根據以下的會議逐字稿內容，回答使用者的問題。
+            
+            **會議逐字稿內容：**
+            ${transcriptionResult.transcript}
+            
+            **使用者問題：**
+            ${question}
+            
+            請用繁體中文回答，語氣專業且友善。
+        `;
+
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${activeKey}`;
+        const payload = {
+            contents: [{ parts: [{ text: prompt }] }]
+        };
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error('Chat failed');
+        const result = await response.json();
+        const answer = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        setChatAnswer(answer);
+
+    } catch (e) {
+        console.error(e);
+        setChatAnswer("抱歉，我現在無法回答這個問題，請稍後再試。");
+    } finally {
+        setIsChatLoading(false);
+    }
+  };
+
+  // --- GEMINI PROCESSING (POLISH / TRANSLATE) ---
+  const callGeminiProcessing = async (mode) => {
+    if (!transcriptionResult) return;
+    
+    setComparisonTitle(mode === 'polish' ? 'AI 語意潤飾對照' : 'AI 中文翻譯對照');
+    setComparisonIcon(mode === 'polish' ? Wand2 : Languages);
+    setIsTranslationMode(mode === 'translate');
+    setProcessedText('');
+    setShowComparisonModal(true);
+    setIsProcessing(true);
+
+    const activeKey = userApiKey || "";
+
+    try {
+      let prompt = "";
+      if (mode === 'polish') {
+        prompt = `
+            你是一位專業的文字編輯。請將以下「口語逐字稿」改寫為通順、專業的「書面文章」。
+            要求：
+            1. 去除贅詞（如：那個、然後、呃）。
+            2. 修正語法錯誤與倒裝句。
+            3. 根據上下文補充漏掉的主詞。
+            4. 保持原意不變，但讓閱讀更流暢。
+            5. 保留發言者標籤。
+            
+            逐字稿內容：
+            ${transcriptionResult.transcript}
+        `;
+      } else {
+        prompt = `
+            你是一位專業翻譯。請將以下逐字稿內容**全部翻譯成流暢的繁體中文**。
+            要求：
+            1. 保留原本的發言者標籤（如 [發言者 A]）與時間戳記，不需翻譯標籤本身。
+            2. 僅翻譯對話內容。
+            3. 確保語意通順，符合台灣繁體中文習慣。
+            
+            逐字稿內容：
+            ${transcriptionResult.transcript}
+        `;
+      }
+
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${activeKey}`;
+      const payload = {
+        contents: [{ parts: [{ text: prompt }] }]
+      };
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) throw new Error('Processing failed');
+      const result = await response.json();
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      setProcessedText(text);
+
+    } catch (e) {
+      console.error(e);
+      setProcessedText("處理失敗，請檢查 API Key 或網路連線。");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRenameApply = (mapping) => {
+    if (!transcriptionResult) return;
+    const newTranscript = replaceSpeakerNames(transcriptionResult.transcript, mapping);
+    const newSrt = replaceSpeakerNames(transcriptionResult.srtContent, mapping);
+    setTranscriptionResult({
+        transcript: newTranscript,
+        srtContent: newSrt
+    });
+  };
+
+  const handleSingleDownload = async (type) => {
+    if (!audioBlob || !transcriptionResult) return;
+    const timestamp = getFormattedTimestamp();
+    const baseName = `超強逐字記錄器_${timestamp}`;
+
+    if (type === 'audio') {
+        const fileExtension = audioBlob.type.includes('mp4') ? 'mp4' : 'webm';
+        downloadFile(`${baseName}_音訊.${fileExtension}`, audioBlob, audioBlob.type);
+    } else if (type === 'text') {
+        downloadFile(`${baseName}_文字.txt`, transcriptionResult.transcript.replace(/\[\d{2}:\d{2}\]\s*/g, ''), 'text/plain');
+    } else if (type === 'srt') {
+        downloadFile(`${baseName}_字幕.srt`, transcriptionResult.srtContent, 'application/x-subrip');
+    }
+  };
+
+  const cleanUpResources = async () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch (e) {}
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        if (audioContextRef.current.state !== 'closed') {
+          await audioContextRef.current.close();
+        }
+      } catch (e) { console.error(e); }
+      audioContextRef.current = null;
+    }
+    await releaseWakeLock(); // Release lock on cleanup
+    sourceNodeRef.current = null;
+    analyserRef.current = null;
+  };
+
+  const startTimer = () => {
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    timerIntervalRef.current = setInterval(() => {
+      setRecordingTime(prevTime => {
+        const newTime = prevTime + 1;
+        recordingTimeRef.current = newTime;
+        return newTime;
+      });
+    }, 1000);
+  };
+  
+  const pauseTimer = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+  };
+
+  const startRecording = async () => {
+    setError(null);
+    audioChunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream; 
+      const mimeType = getSupportedMimeType();
+      const options = mimeType ? { mimeType } : undefined;
+      const recorder = new MediaRecorder(stream, options);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        await cleanUpResources();
+        const finalMimeType = mimeType || 'audio/webm';
+        const fullBlob = new Blob(audioChunksRef.current, { type: finalMimeType });
+        setAudioBlob(fullBlob);
+        const durationSeconds = recordingTimeRef.current; 
+        setLastDuration(durationSeconds);
+        await callGeminiApi(fullBlob, durationSeconds);
+      };
+      recorder.start(100); 
+      mediaRecorderRef.current = recorder;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      audioContextRef.current = new AudioContextClass();
+      if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
+      const audioSource = audioContextRef.current.createMediaStreamSource(stream);
+      const analyser = audioContextRef.current.createAnalyser();
+      analyser.smoothingTimeConstant = 0.8;
+      analyser.fftSize = 2048;
+      audioSource.connect(analyser);
+      sourceNodeRef.current = audioSource;
+      analyserRef.current = analyser;
+      setRecordingTime(0);
+      recordingTimeRef.current = 0;
+      startTimer();
+      await requestWakeLock(); // Request Lock
+      setAppState('recording');
+    } catch (err) {
+      console.error('Mic error:', err);
+      let errMsg = '無法存取麥克風。請檢查權限。';
+      if (err.name === 'NotAllowedError') errMsg = '請允許麥克風權限以開始錄音。';
+      setError(errMsg);
+      setAppState('error');
+    }
+  };
+
+  const pauseRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.pause();
+      pauseTimer();
+      if (sourceNodeRef.current) {
+        try { sourceNodeRef.current.disconnect(); } catch (e) {}
+      }
+      releaseWakeLock(); // Release lock on pause
+      setAppState('paused');
+    }
+  };
+
+  const resumeRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+      mediaRecorderRef.current.resume();
+      startTimer();
+      if (sourceNodeRef.current && analyserRef.current) {
+         try { sourceNodeRef.current.connect(analyserRef.current); } catch(e) {}
+      }
+      requestWakeLock(); // Re-request lock
+      setAppState('recording');
+    }
+  };
+  
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && (mediaRecorderRef.current.state === 'recording' || mediaRecorderRef.current.state === 'paused')) {
+      mediaRecorderRef.current.stop(); 
+      pauseTimer(); 
+    }
+  };
+
+  const resetApp = async () => {
+    await cleanUpResources(); 
+    setAppState('idle');
+    setRecordingTime(0);
+    recordingTimeRef.current = 0;
+    setError(null);
+    setAudioBlob(null);
+    setTranscriptionResult(null);
+    setShowConfirmModal(false);
+  };
+
+  // --- RENDERERS ---
+
+  const renderController = () => {
+    switch (appState) {
+      case 'idle':
+      case 'error':
+        return (
+          <div className="flex flex-col items-center w-full relative">
+                <button 
+                    onClick={() => setShowApiKeyModal(true)}
+                    className="absolute -top-12 -left-2 p-2 text-pink-400 hover:text-pink-600 hover:bg-pink-100 rounded-full transition-colors"
+                    title="設定 API Key"
+                >
+                    <Settings className="w-6 h-6" />
+                </button>
+
+                <button 
+                  onClick={startRecording}
+                  className="w-32 h-32 rounded-full bg-pink-500 shadow-2xl hover:bg-pink-600 hover:scale-105 active:scale-95 transition-all flex flex-col items-center justify-center text-white relative overflow-hidden group mb-6"
+                >
+                  <div className="absolute inset-0 bg-white/20 animate-pulse-slow rounded-full scale-150"></div>
+                  <Mic className="w-10 h-10 z-10 mb-2" />
+                  <span className="text-sm font-bold z-10">開始錄音</span>
+                </button>
+             {error && <div className="text-red-500 text-sm bg-red-50 px-3 py-1 rounded-full mb-4">{error}</div>}
+             <p className="text-xs text-gray-400 max-w-xs text-center">
+              * 超強功能：防休眠錄音 + 自動分群。<br/>
+              錄音結束後，您可以「試聽」每個人的聲音並填入真實姓名。
+             </p>
+          </div>
+        );
+
+      case 'recording':
+      case 'paused':
+        return (
+          <div className="flex space-x-6">
+            <button
+              onClick={appState === 'recording' ? pauseRecording : resumeRecording}
+              className="p-4 rounded-full bg-yellow-500 hover:bg-yellow-600 text-white shadow-xl transition-all active:scale-95 flex items-center space-x-2 touch-manipulation"
+            >
+              {appState === 'recording' ? <Pause className="w-6 h-6" /> : <ListPlus className="w-6 h-6" />}
+              <span>{appState === 'recording' ? '暫停' : '繼續'}</span>
+            </button>
+            <button
+              onClick={stopRecording}
+              className="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-xl transition-all active:scale-95 flex items-center space-x-2 touch-manipulation"
+            >
+              <Square className="w-6 h-6 fill-white" />
+              <span>結束</span>
+            </button>
+          </div>
+        );
+
+      case 'transcribing':
+        return (
+          <div className="flex flex-col items-center max-w-md mx-auto">
+            <Loader2 className="w-12 h-12 text-pink-500 animate-spin" />
+            <p className="mt-4 text-gray-700 text-lg font-semibold">AI 正在分辨發言者並轉錄...</p>
+            <p className="text-sm text-gray-500 mt-2 text-center">
+               預估需要時間：{lastDuration > 300 ? `${Math.ceil(lastDuration / 15 / 60)}~${Math.ceil(lastDuration / 10 / 60)} 分鐘` : '幾秒鐘'} 
+            </p>
+          </div>
+        );
+
+      case 'review':
+        return null;
+      default:
+        return null;
+    }
+  };
+
+  const renderReviewOverlay = () => {
+    if (appState !== 'review' || !transcriptionResult || !audioBlob) return null;
+    
+    return (
+      <div className="fixed inset-0 bg-pink-50 z-50 flex flex-col h-full w-full font-sans">
+        
+        {/* 1. Top Bar: Audio Player */}
+        <div className="bg-white shadow-md p-4 flex-shrink-0 z-10">
+            <div className="max-w-3xl mx-auto">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-bold text-pink-800 flex items-center">
+                        <CheckCircle className="w-6 h-6 mr-2 text-green-500" />
+                        轉錄完成
+                    </h2>
+                    <div className="flex space-x-2">
+                        <button onClick={() => setShowRenamerModal(true)} className="px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-xs font-bold flex items-center hover:bg-green-200 transition-colors">
+                            <Users className="w-4 h-4 mr-1" /> 設定人名
+                        </button>
+                        <button 
+                            onClick={() => setShowConfirmModal(true)} 
+                            className="px-4 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-xs font-bold flex items-center hover:bg-gray-200 transition-colors"
+                        >
+                            <Home className="w-4 h-4 mr-1.5" />
+                            回到主頁
+                        </button>
+                    </div>
+                </div>
+                
+                <div className="bg-pink-50 rounded-xl p-2 flex items-center space-x-3 border border-pink-100">
+                    <div className="bg-white p-2 rounded-full shadow-sm">
+                        <Play className="w-5 h-5 text-pink-500 ml-0.5" />
+                    </div>
+                    <audio controls playsInline webkit-playsinline="true" src={stableAudioUrl} className="w-full h-8 opacity-80" />
+                </div>
+            </div>
+        </div>
+
+        {/* 2. Main Content: Transcript (Scrollable) */}
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+            <div className="max-w-3xl mx-auto bg-white rounded-2xl shadow-sm p-6 min-h-full">
+                <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider">逐字稿內容</h3>
+                    <div className="flex space-x-2">
+                        <button 
+                            onClick={() => callGeminiProcessing('polish')}
+                            className="px-3 py-1.5 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-lg text-xs font-bold flex items-center shadow hover:opacity-90 transition-opacity"
+                        >
+                            <Wand2 className="w-4 h-4 mr-1.5" />
+                            ✨ 潤飾語詞
+                        </button>
+                        <button 
+                            onClick={() => callGeminiProcessing('translate')}
+                            className="px-3 py-1.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg text-xs font-bold flex items-center shadow hover:opacity-90 transition-opacity"
+                        >
+                            <Languages className="w-4 h-4 mr-1.5" />
+                            🌐 翻譯中文
+                        </button>
+                    </div>
+                </div>
+                <div className="whitespace-pre-wrap text-gray-800 leading-relaxed text-base">
+                    {transcriptionResult.transcript}
+                </div>
+            </div>
+        </div>
+
+        {/* 3. Bottom Bar: AI Actions & Download */}
+        <div className="bg-white border-t border-pink-100 p-4 flex-shrink-0 safe-area-bottom">
+            <div className="max-w-3xl mx-auto space-y-4">
+                {/* AI Chips */}
+                <div className="flex overflow-x-auto space-x-3 pb-1 no-scrollbar">
+                     <button onClick={() => setShowChatModal(true)} className="flex-shrink-0 px-4 py-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white rounded-full text-sm font-bold shadow-md flex items-center whitespace-nowrap active:scale-95 transition-transform mr-2">
+                        <MessageSquare className="w-4 h-4 mr-1.5" /> 💬 AI 問答
+                    </button>
+                    <button onClick={() => callGeminiAnalysis('summary')} className="flex-shrink-0 px-4 py-2 bg-orange-50 text-orange-600 rounded-full text-sm font-bold border border-orange-100 flex items-center whitespace-nowrap active:scale-95 transition-transform">
+                        <Sparkles className="w-4 h-4 mr-1.5" /> 重點摘要
+                    </button>
+                    <button onClick={() => callGeminiAnalysis('todo')} className="flex-shrink-0 px-4 py-2 bg-blue-50 text-blue-600 rounded-full text-sm font-bold border border-blue-100 flex items-center whitespace-nowrap active:scale-95 transition-transform">
+                        <ListTodo className="w-4 h-4 mr-1.5" /> 待辦事項
+                    </button>
+                    <button onClick={() => callGeminiAnalysis('email')} className="flex-shrink-0 px-4 py-2 bg-purple-50 text-purple-600 rounded-full text-sm font-bold border border-purple-100 flex items-center whitespace-nowrap active:scale-95 transition-transform">
+                        <Mail className="w-4 h-4 mr-1.5" /> 跟進信件
+                    </button>
+                </div>
+
+                {/* 分流下載按鈕 Grid */}
+                <div className="grid grid-cols-3 gap-3">
+                    <button 
+                        onClick={() => handleSingleDownload('audio')} 
+                        className="py-3 bg-pink-100 text-pink-700 rounded-xl font-bold shadow-sm hover:bg-pink-200 active:scale-95 transition-all flex flex-col items-center justify-center"
+                    >
+                        <Volume2 className="w-5 h-5 mb-1" />
+                        <span className="text-xs">下載音訊</span>
+                    </button>
+                    <button 
+                        onClick={() => handleSingleDownload('text')} 
+                        className="py-3 bg-pink-100 text-pink-700 rounded-xl font-bold shadow-sm hover:bg-pink-200 active:scale-95 transition-all flex flex-col items-center justify-center"
+                    >
+                        <FileText className="w-5 h-5 mb-1" />
+                        <span className="text-xs">下載文字</span>
+                    </button>
+                    <button 
+                        onClick={() => handleSingleDownload('srt')} 
+                        className="py-3 bg-pink-100 text-pink-700 rounded-xl font-bold shadow-sm hover:bg-pink-200 active:scale-95 transition-all flex flex-col items-center justify-center"
+                    >
+                        <ListPlus className="w-5 h-5 mb-1" />
+                        <span className="text-xs">下載字幕</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderConfirmationModal = () => {
+    if (!showConfirmModal) return null;
+    return (
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full">
+          <h3 className="text-xl font-bold text-red-600 mb-4">確認重置</h3>
+          <p className="text-gray-700 mb-6">您確定要放棄當前成果並返回主程式嗎？所有未下載的資料將會遺失。</p>
+          <div className="flex justify-end space-x-3">
+            <button onClick={() => setShowConfirmModal(false)} className="px-4 py-2 text-gray-600 bg-gray-200 rounded-lg hover:bg-gray-300">取消</button>
+            <button onClick={resetApp} className="px-4 py-2 text-white bg-red-500 rounded-lg hover:bg-red-600">確認重置</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const isRecordingOrPaused = appState === 'recording' || appState === 'paused';
+  const isTranscribing = appState === 'transcribing';
+
+  return (
+    <div className="relative min-h-screen bg-pink-50 p-4 flex items-center justify-center overflow-hidden font-sans">
+      <BackgroundGlows />
+      
+      {appState !== 'review' && (
+        <div className="relative z-10 w-full max-w-xl bg-white/80 backdrop-blur-lg p-6 md:p-12 rounded-[2.5rem] shadow-2xl border border-white/40">
+            <header className="text-center mb-8">
+            <h1 className="text-3xl md:text-4xl font-extrabold text-pink-800">超強逐字記錄器</h1>
+            <p className="text-gray-600 mt-2 text-sm md:text-base">即時錄音 • 自動分群 • 智能轉錄</p>
+            </header>
+            <div className="flex flex-col items-center space-y-8">
+            {(isRecordingOrPaused || isTranscribing) && (
+                <div className="w-full text-center">
+                <div className="mb-4">
+                    <p className={`text-6xl font-extrabold transition-colors duration-500 ${isRecordingOrPaused ? 'text-red-500' : 'text-gray-400'}`}>
+                    {formatTime(recordingTime)}
+                    </p>
+                    <p className="text-sm text-gray-500 uppercase font-semibold tracking-wider mt-1">
+                    {isRecordingOrPaused ? (appState === 'recording' ? '錄音中...' : '已暫停') : '音訊處理中...'}
+                    {/* 顯示防休眠狀態 */}
+                    {appState === 'recording' && <span className="block text-[10px] text-green-500 mt-1 flex items-center justify-center"><Zap className="w-3 h-3 mr-1"/>防休眠啟用中</span>}
+                    </p>
+                </div>
+                <div className={`transition-opacity duration-300 ${appState === 'recording' ? 'opacity-100' : 'opacity-20'} h-24`}>
+                    <AudioVisualizer analyser={analyserRef.current} isRecording={appState === 'recording'} />
+                </div>
+                </div>
+            )}
+            {renderController()}
+            </div>
+            
+            {/* Signature at bottom of main screen */}
+            <div className="mt-auto pt-6 pb-4 text-center">
+                <p className="text-xs font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:from-fuchsia-500 hover:to-pink-500 transition-all">
+                    DESIGNED BY 王智德
+                </p>
+                <a href="mailto:weisun0254@gmail.com" className="text-[10px] font-bold text-indigo-500 hover:text-indigo-700 tracking-wide mt-1 block transition-colors">
+                    weisun0254@gmail.com
+                </a>
+            </div>
+        </div>
+      )}
+
+      {renderReviewOverlay()}
+      {renderConfirmationModal()}
+      {showApiKeyModal && (
+        <ApiKeyModal 
+            currentKey={userApiKey} 
+            onClose={() => setShowApiKeyModal(false)} 
+            onSave={handleSaveApiKey} 
+        />
+      )}
+      
+      {showRenamerModal && transcriptionResult && audioBlob && (
+        <SpeakerRenamer 
+            transcript={transcriptionResult.transcript} 
+            audioUrl={stableAudioUrl}
+            onClose={() => setShowRenamerModal(false)}
+            onApply={handleRenameApply}
+        />
+      )}
+      
+      {showAnalysisModal && (
+        <AIAnalysisModal 
+          title={analysisTitle}
+          content={analysisContent}
+          isLoading={isAnalyzing}
+          onClose={() => setShowAnalysisModal(false)}
+        />
+      )}
+
+      {showComparisonModal && transcriptionResult && (
+        <ComparisonModal
+            title={comparisonTitle}
+            icon={comparisonIcon}
+            originalText={transcriptionResult.transcript}
+            processedText={processedText}
+            isLoading={isProcessing}
+            onClose={() => setShowComparisonModal(false)}
+            audioUrl={stableAudioUrl}
+            isTranslation={isTranslationMode}
+        />
+      )}
+      
+      {showChatModal && transcriptionResult && (
+         <AIChatModal
+            onClose={() => setShowChatModal(false)}
+            onAskAI={callGeminiChat}
+            isLoading={isChatLoading}
+            answer={chatAnswer}
+         />
+      )}
+
+      <style>{`
+        @keyframes pulse-slow { 0%, 100% { opacity: 0.5; transform: scale(1); } 50% { opacity: 0.7; transform: scale(1.05); } }
+        .animate-pulse-slow { animation: pulse-slow 2s infinite ease-in-out; }
+        @keyframes blob { 0% { transform: translate(0px, 0px) scale(1); } 33% { transform: translate(30px, -50px) scale(1.1); } 66% { transform: translate(-20px, 20px) scale(0.9); } 100% { transform: translate(0px, 0px) scale(1); } }
+        .animate-blob { animation: blob 7s infinite; }
+        .animation-delay-2000 { animation-delay: 2s; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #fbcfe8; border-radius: 20px; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
+    </div>
+  );
+};
+
+export default App;
