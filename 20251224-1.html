@@ -4,296 +4,269 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>大洋周 Tanya English - 2026 寒假活動全攻略</title>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>
         /* --- 變數系統 --- */
         :root {
             --primary: #2563eb;       /* 專業藍 */
             --primary-dark: #1e40af;
-            --secondary: #f59e0b;     /* 活力橘 */
+            --accent: #f59e0b;        /* 活力橘 */
             --bg-body: #f8fafc;
             --bg-card: #ffffff;
             --text-main: #1e293b;
             --text-sub: #64748b;
-            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
             --radius: 16px;
         }
 
-        /* --- 基礎重置 --- */
-        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        /* --- 基礎設定 --- */
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; scroll-behavior: smooth; }
         body {
             font-family: 'Noto Sans TC', sans-serif;
             background-color: var(--bg-body);
             color: var(--text-main);
             margin: 0;
-            padding-bottom: 80px; /* 留給懸浮按鈕的空間 */
+            padding-bottom: 100px; /* 留給懸浮按鈕 */
         }
 
-        /* --- Header --- */
-        header {
-            background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
-            padding: 24px 20px;
+        /* --- 1. 首頁大看板 (Hero Section) --- */
+        .hero {
+            background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+            color: white;
+            padding: 60px 20px 40px;
             text-align: center;
-            border-bottom: 1px solid #e2e8f0;
-            position: sticky;
-            top: 0;
-            z-index: 50;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.03);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(37, 99, 235, 0.2);
         }
-        h1 {
-            margin: 0;
-            font-size: 1.5rem;
-            color: var(--primary);
-            font-weight: 700;
+        /* 裝飾背景圓圈 */
+        .hero::before {
+            content: ''; position: absolute; top: -50px; left: -50px; width: 150px; height: 150px;
+            background: rgba(255,255,255,0.1); border-radius: 50%;
         }
-        .subtitle {
-            margin: 8px 0 0;
-            font-size: 0.9rem;
-            color: var(--text-sub);
+        .hero::after {
+            content: ''; position: absolute; bottom: 20px; right: -20px; width: 100px; height: 100px;
+            background: rgba(245, 158, 11, 0.2); border-radius: 50%;
         }
 
-        /* --- 分類導航 (水平滑動) --- */
-        .filter-nav {
-            display: flex;
-            gap: 10px;
-            padding: 16px 20px;
-            overflow-x: auto;
-            background: white;
-            white-space: nowrap;
-            -ms-overflow-style: none;  /* IE/Edge 隱藏捲軸 */
-            scrollbar-width: none;  /* Firefox 隱藏捲軸 */
-            border-bottom: 1px solid #f1f5f9;
+        .hero h1 {
+            font-size: 2rem;
+            margin: 0 0 10px;
+            line-height: 1.3;
+            font-weight: 900;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
-        .filter-nav::-webkit-scrollbar { display: none; } /* Chrome 隱藏捲軸 */
-
-        .filter-btn {
-            border: 1px solid #e2e8f0;
-            background: white;
-            padding: 8px 16px;
-            border-radius: 50px;
-            font-size: 0.95rem;
-            color: var(--text-sub);
-            cursor: pointer;
-            transition: all 0.2s ease;
+        .hero p {
+            font-size: 1rem;
+            opacity: 0.9;
+            margin: 0 0 25px;
             font-weight: 500;
         }
-        .filter-btn.active {
-            background: var(--primary);
+        .hero-btn {
+            display: inline-block;
+            background: var(--accent);
             color: white;
-            border-color: var(--primary);
-            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-weight: 700;
+            text-decoration: none;
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
+            transition: transform 0.2s;
         }
-        .filter-btn:hover:not(.active) {
-            background: #f1f5f9;
+        .hero-btn:active { transform: scale(0.95); }
+
+        /* --- 導航列 (Sticky) --- */
+        .sticky-nav {
+            position: sticky;
+            top: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            z-index: 50;
+            border-bottom: 1px solid #e2e8f0;
+            padding: 10px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        .filter-nav {
+            display: flex; gap: 10px; padding: 0 20px; overflow-x: auto;
+            -ms-overflow-style: none; scrollbar-width: none;
+        }
+        .filter-nav::-webkit-scrollbar { display: none; }
+        .filter-btn {
+            border: 1px solid #e2e8f0; background: white; padding: 8px 16px;
+            border-radius: 50px; color: var(--text-sub); font-weight: 500; white-space: nowrap;
+        }
+        .filter-btn.active {
+            background: var(--primary); color: white; border-color: var(--primary);
+            box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
         }
 
-        /* --- 瀑布流/網格佈局 --- */
+        /* --- 海報展示區 --- */
+        .section-title {
+            text-align: center; margin: 40px 0 20px; font-size: 1.4rem; color: var(--primary-dark);
+        }
         .gallery {
-            max-width: 1200px;
-            margin: 20px auto;
-            padding: 0 16px;
-            column-count: 1; /* 手機預設 1 欄 */
-            column-gap: 20px;
+            max-width: 1200px; margin: 0 auto; padding: 0 16px;
+            column-count: 1; column-gap: 20px;
         }
-
-        /* 平板以上改為多欄 */
         @media (min-width: 640px) { .gallery { column-count: 2; } }
         @media (min-width: 1024px) { .gallery { column-count: 3; } }
 
-        /* --- 卡片設計 --- */
         .card {
-            background: var(--bg-card);
-            border-radius: var(--radius);
-            break-inside: avoid; /* 防止卡片被切斷 */
-            margin-bottom: 20px;
-            box-shadow: var(--shadow);
-            overflow: hidden;
-            transition: transform 0.2s, box-shadow 0.2s;
-            cursor: zoom-in;
-            border: 1px solid rgba(0,0,0,0.03);
-            position: relative;
+            background: var(--bg-card); border-radius: var(--radius);
+            break-inside: avoid; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+            overflow: hidden; cursor: zoom-in; position: relative; border: 1px solid #f1f5f9;
         }
-        
-        /* 載入動畫 */
-        .card {
-            animation: fadeIn 0.5s ease-up;
-        }
-
-        .card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.15);
-        }
-
-        .card img {
-            width: 100%;
-            height: auto;
-            display: block;
-            border-bottom: 1px solid #f1f5f9;
-        }
-
-        .card-content {
-            padding: 16px;
-        }
-
-        /* 標籤樣式 */
+        .card img { width: 100%; height: auto; display: block; background: #eee; }
+        .card-content { padding: 15px; }
+        .card-title { font-size: 1.1rem; font-weight: 700; margin: 0 0 5px; color: var(--text-main); }
+        .card-desc { font-size: 0.9rem; color: var(--text-sub); margin: 0; }
         .tag {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-            letter-spacing: 0.5px;
+            display: inline-block; padding: 4px 8px; border-radius: 4px;
+            font-size: 0.75rem; font-weight: 600; margin-bottom: 8px;
         }
         .tag.academic { background: #dbeafe; color: #1e40af; }
         .tag.skill { background: #ffedd5; color: #9a3412; }
         .tag.trip { background: #dcfce7; color: #166534; }
         .tag.admin { background: #fce7f3; color: #9d174d; }
 
-        .card-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            margin: 0;
-            line-height: 1.4;
-            color: var(--text-main);
+        /* --- 2. 活動時間軸 (Timeline) --- */
+        .timeline-section {
+            max-width: 800px; margin: 40px auto; padding: 0 20px;
         }
-        .card-desc {
-            margin-top: 6px;
-            font-size: 0.9rem;
-            color: var(--text-sub);
+        .timeline {
+            position: relative; border-left: 3px solid #e2e8f0; margin-left: 10px; padding-left: 30px;
         }
+        .timeline-item {
+            position: relative; margin-bottom: 30px;
+        }
+        /* 時間軸上的圓點 */
+        .timeline-item::before {
+            content: ''; position: absolute; left: -39px; top: 5px;
+            width: 15px; height: 15px; border-radius: 50%;
+            background: white; border: 3px solid var(--primary);
+        }
+        .timeline-date {
+            font-weight: 700; color: var(--primary); font-size: 1.1rem; margin-bottom: 5px;
+        }
+        .timeline-content {
+            background: white; padding: 15px; border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05); border: 1px solid #f1f5f9;
+        }
+        .timeline-content h4 { margin: 0 0 5px; font-size: 1rem; color: #333; }
+        .timeline-content p { margin: 0; font-size: 0.9rem; color: #666; }
 
-        /* --- 懸浮按鈕 CTA --- */
+        /* --- 懸浮按鈕 & 燈箱 --- */
         .fab {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            background: var(--secondary);
-            color: white;
-            padding: 14px 24px;
-            border-radius: 50px;
-            font-weight: 700;
-            text-decoration: none;
-            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            position: fixed; bottom: 20px; right: 20px; background: var(--accent);
+            color: white; padding: 12px 24px; border-radius: 50px; font-weight: 700;
+            text-decoration: none; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.5);
+            display: flex; align-items: center; gap: 8px; z-index: 90;
             transition: transform 0.2s;
-            z-index: 90;
         }
-        .fab:hover { transform: scale(1.05); background: #e89606; }
-        .fab:active { transform: scale(0.95); }
+        .fab:hover { transform: scale(1.05); }
 
-        /* --- 燈箱 Lightbox --- */
         .lightbox {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.9);
-            z-index: 1000;
-            opacity: 0;
-            transition: opacity 0.3s;
-            justify-content: center;
-            align-items: center;
-            backdrop-filter: blur(5px);
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 1000; justify-content: center; align-items: center;
         }
-        .lightbox.show {
-            display: flex;
-            opacity: 1;
-        }
-        .lightbox img {
-            max-width: 95%;
-            max-height: 90vh;
-            border-radius: 4px;
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
-            transform: scale(0.9);
-            transition: transform 0.3s;
-        }
-        .lightbox.show img { transform: scale(1); }
+        .lightbox.show { display: flex; }
+        .lightbox img { max-width: 95%; max-height: 90vh; border-radius: 4px; }
         .close-btn {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            color: white;
-            font-size: 2rem;
-            cursor: pointer;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(255,255,255,0.2);
-            border-radius: 50%;
-        }
-
-        /* --- 動畫 Keyframes --- */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* --- 暫位圖樣式 (如果圖片遺失顯示) --- */
-        .img-placeholder {
-            background: #cbd5e1;
-            height: 200px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #64748b;
-            font-weight: bold;
+            position: absolute; top: 20px; right: 20px; color: white; font-size: 2rem;
+            cursor: pointer; width: 40px; height: 40px; background: rgba(255,255,255,0.2);
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
         }
     </style>
 </head>
 <body>
 
-    <header>
-        <h1>大洋周 Tanya English</h1>
-        <p class="subtitle">2026 寒假活動全攻略 | 精彩課程搶先看</p>
-    </header>
+    <!-- 1. 新增：首頁大看板 -->
+    <section class="hero">
+        <h1>2026 寒假<br>把時間還給孩子的<br><span style="color:#fbbf24">笑聲與成長</span></h1>
+        <p>學科先修 x 素養手作 x 戶外探索<br>給孩子一個充實難忘的冬天</p>
+        <a href="#timeline-area" class="hero-btn">📅 查看活動日程</a>
+    </section>
 
-    <!-- 分類按鈕 -->
-    <nav class="filter-nav">
-        <button class="filter-btn active" onclick="filter('all')">全部</button>
-        <button class="filter-btn" onclick="filter('academic')">📚 學科先修</button>
-        <button class="filter-btn" onclick="filter('skill')">🎨 素養與才藝</button>
-        <button class="filter-btn" onclick="filter('trip')">🚌 校外教學</button>
-        <button class="filter-btn" onclick="filter('admin')">📢 行政與優惠</button>
-    </nav>
+    <!-- 導航列 -->
+    <div class="sticky-nav">
+        <nav class="filter-nav">
+            <button class="filter-btn active" onclick="filter('all')">全部</button>
+            <button class="filter-btn" onclick="filter('academic')">📚 學科先修</button>
+            <button class="filter-btn" onclick="filter('skill')">🎨 素養才藝</button>
+            <button class="filter-btn" onclick="filter('trip')">🚌 校外教學</button>
+            <button class="filter-btn" onclick="filter('admin')">📢 行政公告</button>
+        </nav>
+    </div>
 
-    <!-- 圖片展示區 -->
+    <!-- 海報展示區 -->
+    <h2 class="section-title">✨ 精彩課程搶先看</h2>
     <main class="gallery" id="gallery-container">
-        <!-- 內容會由 JS 自動產生 -->
+        <!-- JS 自動生成圖片 -->
     </main>
 
-    <!-- 懸浮報名按鈕 -->
-    <a href="tel:0229646498" class="fab">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-        立即報名 / 諮詢
-    </a>
+    <!-- 2. 新增：活動時間軸 -->
+    <section id="timeline-area" class="timeline-section">
+        <h2 class="section-title">📅 寒假重要日程表</h2>
+        <div class="timeline">
+            <!-- 時間軸項目 1 -->
+            <div class="timeline-item">
+                <div class="timeline-date">1/21 (三)</div>
+                <div class="timeline-content">
+                    <h4>🚌 宜蘭校外教學</h4>
+                    <p>潭酵天地 & 水樂園 (請穿著輕便服裝)</p>
+                </div>
+            </div>
+            <!-- 時間軸項目 2 -->
+            <div class="timeline-item">
+                <div class="timeline-date">1/25 (日)</div>
+                <div class="timeline-content">
+                    <h4>📝 學科先修班 開課</h4>
+                    <p>國語、數學、社會科銜接課程開始</p>
+                </div>
+            </div>
+            <!-- 時間軸項目 3 -->
+            <div class="timeline-item">
+                <div class="timeline-date">2/03 (二)</div>
+                <div class="timeline-content">
+                    <h4>🎨 寫作料理課 & 手作營</h4>
+                    <p>剪紙燈籠製作，體驗年節氣氛</p>
+                </div>
+            </div>
+            <!-- 時間軸項目 4 -->
+            <div class="timeline-item">
+                <div class="timeline-date">2/06 (五)</div>
+                <div class="timeline-content">
+                    <h4>🏙️ 府中15 城市探索</h4>
+                    <p>藝文體驗與聚餐活動</p>
+                </div>
+            </div>
+            <div style="text-align:center; margin-top:20px; color:#666; font-size:0.9rem;">
+                * 詳細時間以班內公告海報為主
+            </div>
+        </div>
+    </section>
 
-    <!-- 燈箱 -->
+    <!-- 懸浮按鈕 & 燈箱 (保持不變) -->
+    <a href="tel:0229646498" class="fab">📞 立即報名</a>
+
     <div class="lightbox" id="lightbox" onclick="closeLightbox()">
         <div class="close-btn">&times;</div>
-        <img id="lightbox-img" src="" alt="Full view" onclick="event.stopPropagation()">
+        <img id="lightbox-img" src="" alt="Full view">
     </div>
 
     <script>
-        // 資料設定 (Data)
-        // 注意：這裡的所有圖片副檔名都已改為大寫 .JPG
-        const galleryData = [
-            { src: 'IMG_1863.JPG', category: 'academic', title: '國語先修：閱讀與字彙', tag: '學科先修' },
-            { src: 'IMG_1864.JPG', category: 'academic', title: '數學先修：突破卡關點', tag: '學科先修' },
-            { src: 'IMG_1865.JPG', category: 'academic', title: '社會先修：理解不亦背', tag: '學科先修' },
-            { src: 'IMG_1862.JPG', category: 'skill', title: '寫作料理課：小作家秘笈', tag: '創意寫作' },
-            { src: 'IMG_1861.JPG', category: 'skill', title: 'STEAM 科學：水與槓桿', tag: '科學實驗' },
-            { src: 'IMG_1859.JPG', category: 'skill', title: '冬令營手作：剪紙與燈籠', tag: '文化手作' },
-            { src: 'IMG_1855.JPG', category: 'trip', title: '宜蘭一日遊：潭酵天地', tag: '校外教學' },
-            { src: 'IMG_1866.JPG', category: 'trip', title: '府中15藝文體驗', tag: '校外教學' },
-            { src: 'IMG_1860.JPG', category: 'admin', title: '1-2月收費通知', tag: '重要公告' },
-            { src: 'IMG_1858.JPG', category: 'admin', title: '老友帶新友推薦禮', tag: '好康活動' }
+        // 設定圖片資料 (保持您原本的分類)
+        // 程式會自動猜測 .JPG / .JPG / .png
+        const baseFiles = [
+            { name: 'IMG_1863', category: 'academic', title: '國語先修：閱讀與字彙', tag: '學科先修' },
+            { name: 'IMG_1864', category: 'academic', title: '數學先修：突破卡關點', tag: '學科先修' },
+            { name: 'IMG_1865', category: 'academic', title: '社會先修：理解不亦背', tag: '學科先修' },
+            { name: 'IMG_1862', category: 'skill', title: '寫作料理課：小作家秘笈', tag: '創意寫作' },
+            { name: 'IMG_1861', category: 'skill', title: 'STEAM 科學：水與槓桿', tag: '科學實驗' },
+            { name: 'IMG_1859', category: 'skill', title: '冬令營手作：剪紙與燈籠', tag: '文化手作' },
+            { name: 'IMG_1855', category: 'trip', title: '宜蘭一日遊：潭酵天地', tag: '校外教學' },
+            { name: 'IMG_1866', category: 'trip', title: '府中15藝文體驗', tag: '校外教學' },
+            { name: 'IMG_1860', category: 'admin', title: '1-2月收費通知', tag: '重要公告' },
+            { name: 'IMG_1858', category: 'admin', title: '老友帶新友推薦禮', tag: '好康活動' }
         ];
 
         const container = document.getElementById('gallery-container');
@@ -301,82 +274,71 @@
         const lightboxImg = document.getElementById('lightbox-img');
         const buttons = document.querySelectorAll('.filter-btn');
 
-        // 初始化：渲染所有卡片
         renderGallery('all');
 
-        // 渲染功能
         function renderGallery(filterType) {
-            container.innerHTML = ''; // 清空容器
+            container.innerHTML = '';
+            const filteredData = filterType === 'all' ? baseFiles : baseFiles.filter(item => item.category === filterType);
             
-            // 篩選數據
-            const filteredData = filterType === 'all' 
-                ? galleryData 
-                : galleryData.filter(item => item.category === filterType);
-
             if (filteredData.length === 0) {
                 container.innerHTML = '<div style="text-align:center; padding:40px; color:#999; width:100%;">暫無此類別資料</div>';
                 return;
             }
 
-            // 建立卡片
             filteredData.forEach((item, index) => {
                 const card = document.createElement('div');
                 card.className = 'card';
-                card.style.animationDelay = `${index * 0.05}s`; // 順序動畫
+                card.style.animation = `fadeIn 0.5s ease-up ${index * 0.05}s forwards`;
                 
-                // 決定標籤顏色 class
-                let tagClass = 'tag';
-                if (item.category === 'academic') tagClass += ' academic';
-                else if (item.category === 'skill') tagClass += ' skill';
-                else if (item.category === 'trip') tagClass += ' trip';
-                else tagClass += ' admin';
+                let tagClass = 'tag ' + item.category;
+                const initialSrc = item.name + '.JPG';
 
                 card.innerHTML = `
-                    <img src="${item.src}" alt="${item.title}" loading="lazy" onerror="this.onerror=null; this.src='https://via.placeholder.com/400x300?text=Image+Not+Found';">
+                    <img src="${initialSrc}" alt="${item.title}" onerror="tryNextImage(this, '${item.name}')" onclick="openLightbox(this.src)">
                     <div class="card-content">
                         <span class="${tagClass}">${item.tag}</span>
                         <h3 class="card-title">${item.title}</h3>
-                        <p class="card-desc">點擊查看詳情海報</p>
+                        <p class="card-desc">點擊圖片放大</p>
                     </div>
                 `;
-                
-                // 綁定點擊事件 (開燈箱)
-                card.onclick = () => openLightbox(item.src);
                 container.appendChild(card);
             });
         }
 
-        // 過濾按鈕點擊處理
+        // 萬能圖片副檔名修正器 (保留您的需求)
+        function tryNextImage(imgElement, baseName) {
+            const currentSrc = imgElement.src;
+            if (currentSrc.endsWith('.JPG')) imgElement.src = baseName + '.JPG';
+            else if (currentSrc.endsWith('.JPG')) imgElement.src = baseName + '.jpeg';
+            else if (currentSrc.endsWith('.jpeg')) imgElement.src = baseName + '.png';
+            else {
+                imgElement.onerror = null;
+                imgElement.src = 'https://via.placeholder.com/400x300?text=Image+Not+Found';
+            }
+        }
+
         function filter(type) {
-            // 更新按鈕狀態
             buttons.forEach(btn => btn.classList.remove('active'));
-            // 找到點擊的按鈕並加上 active
             const activeBtn = Array.from(buttons).find(b => b.getAttribute('onclick').includes(type));
             if(activeBtn) activeBtn.classList.add('active');
-            
             renderGallery(type);
         }
 
-        // 燈箱操作
         function openLightbox(src) {
             lightboxImg.src = src;
             lightbox.classList.add('show');
-            document.body.style.overflow = 'hidden'; // 防止背景滾動
+            document.body.style.overflow = 'hidden';
         }
 
         function closeLightbox() {
             lightbox.classList.remove('show');
-            setTimeout(() => {
-                lightboxImg.src = '';
-            }, 300);
             document.body.style.overflow = '';
         }
-
-        // 鍵盤支援 (ESC 關閉)
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeLightbox();
-        });
-
+        
+        // 簡單的動畫定義
+        const styleSheet = document.createElement("style");
+        styleSheet.innerText = `@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`;
+        document.head.appendChild(styleSheet);
     </script>
 </body>
 </html>
